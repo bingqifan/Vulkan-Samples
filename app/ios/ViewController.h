@@ -1,4 +1,4 @@
-/* Copyright (c) 2024, Holochip Inc.
+/* Copyright (c) 2024-2026, Holochip Inc.
 *
 * SPDX-License-Identifier: Apache-2.0
 *
@@ -18,4 +18,6 @@
 #import <UIKit/UIKit.h>
 
 @interface ViewController : UIViewController
++ (UIViewController *)initialViewController;
+- (void)stopRendering;
 @end

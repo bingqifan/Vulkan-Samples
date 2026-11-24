@@ -1,4 +1,4 @@
-/* Copyright (c) 2019-2024, Arm Limited and Contributors
+/* Copyright (c) 2019-2026, Arm Limited and Contributors
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -15,44 +15,11 @@
  * limitations under the License.
  */
 
-#include "core/util/logging.hpp"
-#include "platform/platform.h"
-#include "../plugins/plugins.h"
-
-#include <core/platform/entrypoint.hpp>
-#include <filesystem/filesystem.hpp>
-
-#include <TargetConditionals.h>
-#import <Foundation/Foundation.h>
 #import "AppDelegate.h"
 
-#include "platform/ios/ios_platform.h"
-#include "ios/context.hpp"
-
-#undef CUSTOM_MAIN
-#    define CUSTOM_MAIN(context_name)                           \
-        int platform_main(const vkb::PlatformContext &);        \
-        int main(int argc, char *argv[])                        \
-        {                                                       \
-            NSString * appDelegateClassName;                    \
-            @autoreleasepool {                                  \
-                appDelegateClassName = NSStringFromClass([AppDelegate class]); \
-                return UIApplicationMain(argc, argv, nil, appDelegateClassName); \
-            }                                                   \
-        }                                                       \
-        int platform_main(const vkb::PlatformContext &context_name)
-
-std::unique_ptr<vkb::IosPlatform> platform;
-
-CUSTOM_MAIN(context)
-{
-    vkb::filesystem::init_with_context(context);
-
-    platform = std::make_unique<vkb::IosPlatform>(context);
-
-    auto code = platform->initialize(plugins::get_all());
-    ((vkb::IosPlatformContext*)&context)->userPlatform = platform.get();
-
-    return (int)code;
+int main(int argc, char *argv[]) {
+	@autoreleasepool {
+		return UIApplicationMain(argc, argv, nil, NSStringFromClass(AppDelegate.class));
+	}
 }
 

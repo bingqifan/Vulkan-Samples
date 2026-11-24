@@ -16,131 +16,276 @@
  */
 
 #include "ViewController.h"
-#include "ios/context.hpp"
+#include "../plugins/plugins.h"
+#include "../plugins/start_sample/start_sample.h"
+#include "apps.h"
 #include "core/platform/entrypoint.hpp"
+#include "filesystem/filesystem.hpp"
+#include "ios/context.hpp"
+#include "platform/input_events.h"
 #include "platform/ios/ios_platform.h"
 #include "platform/ios/ios_window.h"
-#include "platform/input_events.h"
 
-int platform_main(const vkb::PlatformContext &);
-
-@interface ViewController(){
-    CADisplayLink* _displayLink;
-    std::unique_ptr<vkb::PlatformContext> context;
-    vkb::IosPlatformContext* _context;
-    vkb::ExitCode _code;
-	UITouch* _activeTouch;
+@interface ViewController () {
+	NSString *_sampleID;
+	CADisplayLink *_displayLink;
+	std::unique_ptr<plugins::StartSample> _pickerPlugin;
+	std::unique_ptr<vkb::IosPlatform> _platform;
+	vkb::ExitCode _code;
+	UITouch *_activeTouch;
 }
-@property (retain, nonatomic) IBOutlet VulkanView *vulkan_view;
+- (instancetype)initWithSample:(const apps::SampleInfo &)sample;
+@end
+
+@interface SamplePickerViewController : UITableViewController {
+	std::vector<apps::AppInfo *> _samples;
+}
+@end
+
+@implementation SamplePickerViewController
+
+- (void)viewDidLoad {
+	[super viewDidLoad];
+	self.title = @"Vulkan Samples";
+	_samples = apps::get_samples();
+	[self.tableView registerClass:UITableViewCell.class forCellReuseIdentifier:@"Sample"];
+	if (_samples.empty()) {
+		UILabel *message = [[[UILabel alloc] init] autorelease];
+		message.text = @"This build contains no samples.";
+		message.textAlignment = NSTextAlignmentCenter;
+		message.textColor = UIColor.secondaryLabelColor;
+		message.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+		self.tableView.backgroundView = message;
+	}
+}
+
+- (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
+	return static_cast<NSInteger>(_samples.size());
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+	const auto &sample = *static_cast<apps::SampleInfo *>(_samples[indexPath.row]);
+	NSString *sampleID = @(sample.id.c_str());
+	UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Sample" forIndexPath:indexPath];
+	UIListContentConfiguration *content = [UIListContentConfiguration subtitleCellConfiguration];
+	content.text = @(sample.name.c_str());
+	content.secondaryText = sampleID;
+	cell.contentConfiguration = content;
+	cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+	cell.accessibilityIdentifier = [@"sample." stringByAppendingString:sampleID];
+	return cell;
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+	[tableView deselectRowAtIndexPath:indexPath animated:YES];
+	UINavigationController *navigation = self.navigationController;
+	if (navigation.topViewController != self || navigation.transitionCoordinator) {
+		return;
+	}
+	const auto &sample = *static_cast<apps::SampleInfo *>(_samples[indexPath.row]);
+	ViewController *renderer = [[[ViewController alloc] initWithSample:sample] autorelease];
+	[navigation pushViewController:renderer animated:YES];
+}
 
 @end
 
 @implementation ViewController
-- (void) viewDidLoad {
-    [super viewDidLoad];
 
-    // Convert incoming args to "C" argc/argv strings
-    NSArray *args = [[NSProcessInfo processInfo] arguments];
-    const char** argv = (const char**) alloca(sizeof(char*) * args.count);
-    for(unsigned int i = 0; i < args.count; i++) {
-        NSString *s = args[i];
-        argv[i] = s.UTF8String;
-    }
-
-	// Allocate and add a Metal-compatible sub-view for Vulkan to use
-	self.vulkan_view = [[VulkanView alloc] initWithFrame:self.view.bounds];
-	[self.view addSubview:self.vulkan_view];
-
-	self.vulkan_view.contentScaleFactor = UIScreen.mainScreen.nativeScale;
-
-    context = create_platform_context((int)args.count, const_cast<char**>(argv));
-    _context = (vkb::IosPlatformContext*)context.get();
-    _context->view = self.vulkan_view;
-    _code = (vkb::ExitCode)platform_main(*context);
-    uint32_t fps = 60;
-   _displayLink = [CADisplayLink displayLinkWithTarget: self selector: @selector(renderLoop)];
-   [_displayLink setPreferredFramesPerSecond:fps];
-   [_displayLink addToRunLoop: NSRunLoop.currentRunLoop forMode: NSDefaultRunLoopMode];
++ (UIViewController *)initialViewController {
+	if (NSProcessInfo.processInfo.arguments.count > 1) {
+		return [[[ViewController alloc] init] autorelease];
+	}
+	SamplePickerViewController *picker = [[[SamplePickerViewController alloc] initWithStyle:UITableViewStyleInsetGrouped] autorelease];
+	UINavigationController *navigation = [[[UINavigationController alloc] initWithRootViewController:picker] autorelease];
+	// Keep the title readable over samples whose Metal view clears to black.
+	UINavigationBarAppearance *appearance = [[[UINavigationBarAppearance alloc] init] autorelease];
+	[appearance configureWithOpaqueBackground];
+	navigation.navigationBar.standardAppearance = appearance;
+	navigation.navigationBar.scrollEdgeAppearance = appearance;
+	return navigation;
 }
 
-- (void) viewDidLayoutSubviews {
-	[super viewDidLayoutSubviews];
-	
-	// Update the Vulkan sub-view to match parent view dimensions following rotation events
-	self.vulkan_view.layer.frame = self.view.bounds;
+- (instancetype)initWithSample:(const apps::SampleInfo &)sample {
+	self = [super initWithNibName:nil bundle:nil];
+	if (self) {
+		_sampleID = [[NSString alloc] initWithUTF8String:sample.id.c_str()];
+		self.title = @(sample.name.c_str());
+		self.edgesForExtendedLayout = UIRectEdgeNone;
+	}
+	return self;
 }
 
--(void) renderLoop {
-    if(!_displayLink.isPaused && [UIApplication sharedApplication].applicationState == UIApplicationStateActive) {
-		if(_code == vkb::ExitCode::Success) {
-			_code = ((vkb::IosPlatform*)_context->userPlatform)->main_loop_frame();
+- (void)dealloc {
+	[self stopRendering];
+	[_sampleID release];
+	[super dealloc];
+}
+
+- (void)loadView {
+	VulkanView *view = [[[VulkanView alloc] initWithFrame:CGRectZero] autorelease];
+	view.backgroundColor = UIColor.blackColor;
+	view.contentScaleFactor = UIScreen.mainScreen.nativeScale;
+	view.accessibilityIdentifier = @"vulkan.sample.rendering";
+	view.accessibilityLabel = @"Vulkan sample rendering";
+	view.accessibilityTraits = UIAccessibilityTraitImage;
+	self.view = view;
+}
+
+- (void)viewDidLoad {
+	[super viewDidLoad];
+
+	NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;
+	if (_sampleID) {
+		arguments = @[arguments.firstObject, @"sample", _sampleID];
+	}
+	std::vector<char *> argv;
+	argv.reserve(arguments.count);
+	for (NSString *argument in arguments) {
+		argv.push_back(const_cast<char *>(argument.UTF8String));
+	}
+	auto context = create_platform_context(static_cast<int>(argv.size()), argv.data());
+	static_cast<vkb::IosPlatformContext &>(*context).view = self.view;
+	vkb::filesystem::init_with_context(*context);
+	_platform = std::make_unique<vkb::IosPlatform>(*context);
+
+	// Picker sessions bind their own launcher. CLI options keep the full plugin set.
+	if (_sampleID) {
+		_pickerPlugin = std::make_unique<plugins::StartSample>();
+		_code = _platform->initialize({_pickerPlugin.get()});
+	} else {
+		_code = _platform->initialize(plugins::get_all());
+	}
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+	[super viewDidAppear:animated];
+	if (_platform && !_displayLink) {
+		_displayLink = [[CADisplayLink displayLinkWithTarget:self selector:@selector(renderLoop)] retain];
+		_displayLink.preferredFramesPerSecond = 60;
+		[_displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSDefaultRunLoopMode];
+	}
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+	[super viewWillDisappear:animated];
+	[self stopDisplayLink];
+	if (_activeTouch) {
+		[self forwardTouch:_activeTouch action:vkb::TouchAction::Cancel];
+		[self clearActiveTouch];
+	}
+}
+
+- (void)didMoveToParentViewController:(UIViewController *)parent {
+	[super didMoveToParentViewController:parent];
+	if (!parent && _sampleID) {
+		// An interactive pop only tears down Vulkan after UIKit removes this controller.
+		[self stopRendering];
+	}
+}
+
+- (void)stopRendering {
+	[self stopRenderingWithCode:vkb::ExitCode::Close];
+}
+
+- (void)stopDisplayLink {
+	[_displayLink invalidate];
+	[_displayLink release];
+	_displayLink = nil;
+}
+
+- (void)clearActiveTouch {
+	[_activeTouch release];
+	_activeTouch = nil;
+}
+
+- (void)stopRenderingWithCode:(vkb::ExitCode)code {
+	[self stopDisplayLink];
+	[self clearActiveTouch];
+	self.viewIfLoaded.isAccessibilityElement = NO;
+	if (_platform) {
+		_platform->terminate(code);
+		_platform.reset();
+		if (!_sampleID) {
+			for (auto *plugin : plugins::get_all()) {
+				plugin->clear_platform();
+			}
 		}
-		else {
-			// On ExitCode error, remove displayLink from run loop and terminate any active sample or batch run
-			[_displayLink invalidate];
-			((vkb::IosPlatform*)_context->userPlatform)->terminate(_code);
+		_pickerPlugin.reset();
+	}
+}
 
-			// Not typically allowed for iOS apps, but exit here given this is an Xcode-controlled dev application
-			exit(0);
+- (void)renderLoop {
+	if (!_platform || UIApplication.sharedApplication.applicationState != UIApplicationStateActive) {
+		return;
+	}
+	if (_code == vkb::ExitCode::Success) {
+		_code = _platform->main_loop_frame();
+		if (_code == vkb::ExitCode::Success) {
+			if (!self.view.isAccessibilityElement) {
+				self.view.isAccessibilityElement = YES;
+			}
+			return;
 		}
-    }
+	}
+
+	const std::string error = _platform->get_last_error();
+	[self stopRenderingWithCode:_code];
+	if (!_sampleID) {
+		// CLI and batch callers depend on this development app exiting when the run ends.
+		exit(0);
+	}
+	if (_code == vkb::ExitCode::Close) {
+		[self.navigationController popViewControllerAnimated:YES];
+		return;
+	}
+
+	NSString *message = error.empty() ? @"The selected sample stopped during startup." : @(error.c_str());
+	UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Sample could not run"
+	                                                               message:message
+	                                                        preferredStyle:UIAlertControllerStyleAlert];
+	__unsafe_unretained ViewController *renderer = self;
+	[alert addAction:[UIAlertAction actionWithTitle:@"Back to Samples" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+		[renderer.navigationController popViewControllerAnimated:YES];
+	}]];
+	[self presentViewController:alert animated:YES completion:nil];
 }
 
--(CGPoint) getTouchLocalPoint:(UITouch*) touch {
-	CGPoint point = [touch locationInView:self.vulkan_view];
-	point.x *= self.vulkan_view.contentScaleFactor;
-	point.y *= self.vulkan_view.contentScaleFactor;
-	return point;
+- (void)forwardTouch:(UITouch *)touch action:(vkb::TouchAction)action {
+	if (!_platform || _code != vkb::ExitCode::Success) {
+		return;
+	}
+	CGPoint point = [touch locationInView:self.view];
+	CGFloat scale = self.view.contentScaleFactor;
+	_platform->input_event(vkb::TouchInputEvent{
+		0, 1, action,
+		static_cast<float>(point.x * scale),
+		static_cast<float>(point.y * scale)});
 }
 
-// Handle touch events for selection and dragging within the display and GUI overlay
--(void) touchesBegan:(NSSet*) touches withEvent:(UIEvent*) theEvent {
-	if (_activeTouch == nil) {
-		_activeTouch = [touches anyObject];
-
-		auto point = [self getTouchLocalPoint:_activeTouch];
-		((vkb::IosPlatform*)_context->userPlatform)->input_event(vkb::TouchInputEvent{
-			0, 1,
-			vkb::TouchAction::Down,
-			static_cast<float>(point.x),
-			static_cast<float>(point.y)});
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+	if (!_activeTouch && _platform) {
+		_activeTouch = [touches.anyObject retain];
+		[self forwardTouch:_activeTouch action:vkb::TouchAction::Down];
 	}
 }
 
--(void) touchesMoved:(NSSet*) touches withEvent:(UIEvent*) theEvent {
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
 	if (_activeTouch && [touches containsObject:_activeTouch]) {
-		auto point = [self getTouchLocalPoint:_activeTouch];
-		((vkb::IosPlatform*)_context->userPlatform)->input_event(vkb::TouchInputEvent{
-			0, 1,
-			vkb::TouchAction::Move,
-			static_cast<float>(point.x),
-			static_cast<float>(point.y)});
+		[self forwardTouch:_activeTouch action:vkb::TouchAction::Move];
 	}
 }
 
--(void) touchesEnded:(NSSet*) touches withEvent:(UIEvent*) theEvent {
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
 	if (_activeTouch && [touches containsObject:_activeTouch]) {
-		auto point = [self getTouchLocalPoint:_activeTouch];
-		((vkb::IosPlatform*)_context->userPlatform)->input_event(vkb::TouchInputEvent{
-			0, 1,
-			vkb::TouchAction::Up,
-			static_cast<float>(point.x),
-			static_cast<float>(point.y)});
-
-		_activeTouch = nil;
+		[self forwardTouch:_activeTouch action:vkb::TouchAction::Up];
+		[self clearActiveTouch];
 	}
 }
 
--(void) touchesCancelled:(NSSet*) touches withEvent:(UIEvent*) theEvent {
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
 	if (_activeTouch && [touches containsObject:_activeTouch]) {
-		auto point = [self getTouchLocalPoint:_activeTouch];
-		((vkb::IosPlatform*)_context->userPlatform)->input_event(vkb::TouchInputEvent{
-			0, 1,
-			vkb::TouchAction::Cancel,
-			static_cast<float>(point.x),
-			static_cast<float>(point.y)});
-
-		_activeTouch = nil;
+		[self forwardTouch:_activeTouch action:vkb::TouchAction::Cancel];
+		[self clearActiveTouch];
 	}
 }
 

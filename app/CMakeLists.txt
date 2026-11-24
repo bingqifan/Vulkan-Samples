@@ -154,11 +154,9 @@ if(IOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/../assets
             ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
             ${CMAKE_CURRENT_SOURCE_DIR}/ios/launch.storyboard
-            ${CMAKE_CURRENT_SOURCE_DIR}/ios/Storyboard.storyboard
             )
     set_source_files_properties(
             ${CMAKE_CURRENT_SOURCE_DIR}/ios/launch.storyboard
-            ${CMAKE_CURRENT_SOURCE_DIR}/ios/Storyboard.storyboard
             ${CMAKE_CURRENT_SOURCE_DIR}/../assets
             ${CMAKE_CURRENT_SOURCE_DIR}/../shaders
             PROPERTIES
@@ -206,7 +204,6 @@ if(IOS)
             XCODE_ATTRIBUTE_SKIP_INSTALL  NO
             XCODE_ATTRIBUTE_INSTALL_PATH  "$(LOCAL_APPS_DIR)"
             XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING NO
-            XCODE_SCHEME_ARGUMENTS "sample hello_triangle"
     )
 elseif(APPLE)
 	# Set Xcode working directory to project root, and command line arguments to default sample

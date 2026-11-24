@@ -28,8 +28,8 @@
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)connectionOptions {
 	UIWindowScene *windowScene = (UIWindowScene *)scene;
 
-	self.window = [[UIWindow alloc] initWithWindowScene:windowScene];
-	self.window.rootViewController = [[ViewController alloc] init];
+	self.window = [[[UIWindow alloc] initWithWindowScene:windowScene] autorelease];
+	self.window.rootViewController = [ViewController initialViewController];
 
 	[self.window makeKeyAndVisible];
 }
@@ -56,10 +56,13 @@
 }
 
 - (void)sceneDidDisconnect:(UIScene *)scene {
-	// Called as the scene is being released by the system.
-	// This occurs shortly after the scene enters the background, or when its session is discarded.
-	// Release any resources associated with this scene that can be re-created the next time the scene connects.
-	// The scene may re-connect later, as its session was not necessarily discarded (see `application:didDiscardSceneSessions` instead).
+	UIViewController *controller = self.window.rootViewController;
+	if ([controller isKindOfClass:UINavigationController.class]) {
+		controller = ((UINavigationController *)controller).topViewController;
+	}
+	if ([controller isKindOfClass:ViewController.class]) {
+		[(ViewController *)controller stopRendering];
+	}
 }
 
 @end
