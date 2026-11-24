@@ -190,6 +190,7 @@ void Platform::register_hooks(Plugin *plugin)
 
 ExitCode Platform::main_loop_frame()
 {
+	const auto *pending_app = requested_app;
 	try
 	{
 		// Load the requested app
@@ -228,10 +229,20 @@ ExitCode Platform::main_loop_frame()
 	}
 	catch (std::exception &e)
 	{
+		// The factory can fail before an active sample is available.
+		std::string app_name = "unknown";
+		if (active_app)
+		{
+			app_name = active_app->get_name();
+		}
+		else if (pending_app)
+		{
+			app_name = pending_app->id;
+		}
 		LOGE("Error Message: {}", e.what());
-		LOGE("Failed when running application {}", active_app->get_name());
+		LOGE("Failed when running application {}", app_name);
 
-		on_app_error(active_app->get_name());
+		on_app_error(app_name);
 
 		if (app_requested())
 		{
@@ -521,8 +532,9 @@ void Platform::resize(uint32_t width, uint32_t height)
 	}
 }
 
+// Different iOS renderer sessions own different hook maps.
 #define HOOK(enum, func)                \
-	static auto res = hooks.find(enum); \
+	auto res = hooks.find(enum);        \
 	if (res != hooks.end())             \
 	{                                   \
 		for (auto plugin : res->second) \
